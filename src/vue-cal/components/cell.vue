@@ -1,5 +1,5 @@
 <template lang="pug">
-.vuecal__cell(ref="cellEl" :class="classes" v-on="cellEventListeners")
+.vuecal__cell(ref="cellEl" :class="classes" v-on="cellEventListeners" :data-date="startFormatted")
   slot(v-if="$slots.cell" name="cell" :cell="cellInfo")
 
   template(v-if="specialHours")
@@ -236,11 +236,84 @@ const formattedCellDate = computed(() => {
 
 const cellEvents = computed(() => {
   if (config.datePicker) return []
-  return eventsManager.getEventsInRange(
+  const originalEvents = eventsManager.getEventsInRange(
     props.start,
     props.end,
     { excludeIds: eventsDeleted.value, ...(config.allDayEvents ? { allDay: props.allDay } : {}) }
   )
+
+  // Transform multi-day events into virtual events for this cell
+  const virtualEvents = []
+  const cellDateStr = dateUtils.formatDate(props.start)
+
+
+  for (const event of originalEvents) {
+    if (event._.multiday) {
+      // Create a virtual event for this specific cell/day
+      const cellDate = new Date(props.start)
+      const eventStart = new Date(event.start)
+      const eventEnd = new Date(event.end)
+
+      // Check if this is the first day of the multi-day event
+      const isFirstDay = dateUtils.isSameDate(cellDate, eventStart)
+      // Check if this is the last day of the multi-day event
+      const isLastDay = dateUtils.isSameDate(cellDate, eventEnd)
+
+      let virtualStart, virtualEnd
+
+      if (isFirstDay && isLastDay) {
+        // Single day event (shouldn't happen for multiday, but safety check)
+        virtualStart = new Date(event.start)
+        virtualEnd = new Date(event.end)
+      } else if (isFirstDay) {
+        // First day: start from event start time, go to end of day
+        virtualStart = new Date(event.start)
+        virtualEnd = new Date(cellDate)
+        virtualEnd.setHours(config.timeTo / 60, config.timeTo % 60, 59, 999)
+      } else if (isLastDay) {
+        // Last day: start from beginning of day, end at event end time
+        virtualStart = new Date(cellDate)
+        virtualStart.setHours(config.timeFrom / 60, config.timeFrom % 60, 0, 0)
+        virtualEnd = new Date(event.end)
+      } else {
+        // Middle day: full day
+        virtualStart = new Date(cellDate)
+        virtualStart.setHours(config.timeFrom / 60, config.timeFrom % 60, 0, 0)
+        virtualEnd = new Date(cellDate)
+        virtualEnd.setHours(config.timeTo / 60, config.timeTo % 60, 59, 999)
+      }
+
+      // Create virtual event with adjusted times for this cell
+      const virtualEvent = {
+        ...event,
+        start: virtualStart,
+        end: virtualEnd,
+        _originalStart: new Date(event.start),
+        _originalEnd: new Date(event.end),
+        _: {
+          ...event._,
+          // Use virtual times for positioning in this cell
+          startMinutes: dateUtils.dateToMinutes(virtualStart),
+          endMinutes: dateUtils.dateToMinutes(virtualEnd),
+          // Store original times for display purposes
+          _originalStartMinutes: event._.startMinutes,
+          _originalEndMinutes: event._.endMinutes,
+          // Store cell context for the event component
+          _cellDate: new Date(cellDate),
+          _isFirstDay: isFirstDay,
+          _isLastDay: isLastDay
+        }
+      }
+
+
+
+      virtualEvents.push(virtualEvent)
+    } else {
+      virtualEvents.push(event)
+    }
+  }
+
+  return virtualEvents
 })
 
 const cellForegroundEvents = computed(() => cellEvents.value.filter(event => !event.background))
@@ -607,7 +680,81 @@ const removeEventListeners = () => {
 }
 
 const recalculateOverlaps = () => {
-  overlappingEvents.value = eventsManager.getCellOverlappingEvents(props.start, props.end, props.allDay)
+  // For multi-day events, we need to create "virtual events" for overlap calculation
+  // Each multi-day event becomes a virtual event for each day it spans
+  const virtualEvents = []
+  const cellDateStr = dateUtils.formatDate(props.start)
+
+
+  for (const event of cellEvents.value) {
+    if (event._.multiday) {
+      // Create a virtual event for this specific cell/day
+      const cellDate = new Date(props.start)
+      const eventStart = new Date(event.start)
+      const eventEnd = new Date(event.end)
+
+      // Check if this is the first day of the multi-day event
+      const isFirstDay = dateUtils.isSameDate(cellDate, eventStart)
+      // Check if this is the last day of the multi-day event
+      const isLastDay = dateUtils.isSameDate(cellDate, eventEnd)
+
+      let virtualStart, virtualEnd
+
+      if (isFirstDay && isLastDay) {
+        // Single day event (shouldn't happen for multiday, but safety check)
+        virtualStart = new Date(event.start)
+        virtualEnd = new Date(event.end)
+      } else if (isFirstDay) {
+        // First day: start from event start time, go to end of day
+        virtualStart = new Date(event.start)
+        virtualEnd = new Date(cellDate)
+        virtualEnd.setHours(config.timeTo / 60, config.timeTo % 60, 59, 999)
+      } else if (isLastDay) {
+        // Last day: start from beginning of day, end at event end time
+        virtualStart = new Date(cellDate)
+        virtualStart.setHours(config.timeFrom / 60, config.timeFrom % 60, 0, 0)
+        virtualEnd = new Date(event.end)
+      } else {
+        // Middle day: full day
+        virtualStart = new Date(cellDate)
+        virtualStart.setHours(config.timeFrom / 60, config.timeFrom % 60, 0, 0)
+        virtualEnd = new Date(cellDate)
+        virtualEnd.setHours(config.timeTo / 60, config.timeTo % 60, 59, 999)
+      }
+
+      // Create virtual event with adjusted times for overlap calculation
+      // but preserve original event for positioning
+      const virtualEvent = {
+        ...event,
+        start: virtualStart,
+        end: virtualEnd,
+        _originalStart: new Date(event.start),
+        _: {
+          ...event._,
+          // Use virtual times only for overlap calculation
+          startMinutes: dateUtils.dateToMinutes(virtualStart),
+          endMinutes: dateUtils.dateToMinutes(virtualEnd),
+          // Store original times for positioning (used by event component)
+          _originalStartMinutes: event._.startMinutes,
+          _originalEndMinutes: event._.endMinutes,
+          // Store cell context for the event component
+          _cellDate: new Date(cellDate),
+          _isFirstDay: isFirstDay,
+          _isLastDay: isLastDay
+        }
+      }
+
+
+      virtualEvents.push(virtualEvent)
+    } else {
+      virtualEvents.push(event)
+    }
+  }
+
+
+  // Now calculate overlaps using the virtual events
+  overlappingEvents.value = eventsManager.getCellOverlappingEventsFromList(virtualEvents, props.start, props.end, props.allDay)
+
 }
 
 watch(

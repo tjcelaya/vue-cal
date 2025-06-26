@@ -63,9 +63,35 @@ export const useEvents = vuecal => {
       }
       else if (event._.multiday) {
         events.multiday.push(event._.id)
-        // @todo: handle multiday events. For now, index the event by its start date.
-        if (!events.byDate[event._.startFormatted]) events.byDate[event._.startFormatted] = []
-        events.byDate[event._.startFormatted].push(event._.id)
+        // Index multiday events by all dates they span
+        const startDate = new Date(event.start)
+        const endDate = new Date(event.end)
+
+        // Create a new date object to avoid modifying the original
+        // Use date comparison without time to ensure we include all days the event spans
+        const startDateOnly = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate())
+        const endDateOnly = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate())
+
+
+        let currentDate = new Date(startDateOnly)
+        while (currentDate.getTime() <= endDateOnly.getTime()) {
+          const dateFormatted = dateUtils.formatDate(currentDate)
+          if (!events.byDate[dateFormatted]) events.byDate[dateFormatted] = []
+          events.byDate[dateFormatted].push(event._.id)
+
+
+          // Also index by year/month/day structure
+          const year = dateFormatted.substring(0, 4)
+          const month = dateFormatted.substring(5, 7)
+          const day = dateFormatted.substring(8, 10)
+          if (!events.byYear[year]) events.byYear[year] = {}
+          if (!events.byYear[year][month]) events.byYear[year][month] = {}
+          if (!events.byYear[year][month][day]) events.byYear[year][month][day] = []
+          events.byYear[year][month][day].push(event._.id)
+
+          // Move to next day
+          currentDate.setDate(currentDate.getDate() + 1)
+        }
       }
       else {
         // Index this event by its start date.
@@ -124,7 +150,13 @@ export const useEvents = vuecal => {
 
     // Always update these core properties as they depend on dates.
     event._.id = event._.id || ++uid
-    event._.multiday = !dateUtils.isSameDate(event.start, new Date(event.end.getTime() - 1)) // Remove 1ms if end is equal to next midnight.
+
+    // Fix multi-day detection: check if start and end are on different dates
+    const startDate = new Date(event.start.getFullYear(), event.start.getMonth(), event.start.getDate())
+    const endDate = new Date(event.end.getFullYear(), event.end.getMonth(), event.end.getDate())
+    event._.multiday = startDate.getTime() !== endDate.getTime()
+
+
     event._.startFormatted = dateUtils.formatDate(event.start) // yyyy-mm-dd formatted date string.
     event._.startMinutes = ~~dateUtils.dateToMinutes(event.start) // Integer (minutes).
     event._.endMinutes = ~~dateUtils.dateToMinutes(event.end) // Integer (minutes).
@@ -473,11 +505,100 @@ export const useEvents = vuecal => {
     return endTimestamp > rangeStart && startTimestamp < rangeEnd
   }
 
+  // Alternative method that works with a provided list of events (used for virtual events)
+  const getCellOverlappingEventsFromList = (eventsList, cellStart, cellEnd, allDay) => {
+    const allDayFilter = config.allDayEvents ? { allDay } : {}
+    const cellEvents = eventsList.filter(event => {
+      if (config.allDayEvents && ((allDay && !event.allDay) || (!allDay && event.allDay))) return false
+      return isEventInRange(event, cellStart, cellEnd)
+    })
+
+    if (!cellEvents.length) return { cellOverlaps: {}, longestStreak: 0 }
+
+    const cellOverlaps = {}
+    let activeEvents = []
+    let maxConcurrent = 0
+
+    // Sort events by their ORIGINAL start time first (for multi-day events),
+    // then by virtual start time, then by duration (shorter first).
+    cellEvents.sort((a, b) => {
+      // Get original start times (stored in _originalStart for virtual events, or use start for regular events)
+      const aOriginalStart = a._originalStart || a.start
+      const bOriginalStart = b._originalStart || b.start
+
+      // First sort by original start time
+      if (aOriginalStart.getTime() !== bOriginalStart.getTime()) {
+        return aOriginalStart - bOriginalStart
+      }
+
+      // Then by virtual start time
+      if (a.start.getTime() !== b.start.getTime()) {
+        return a.start - b.start
+      }
+
+      // Finally by duration (shorter first)
+      return (a.end - a.start) - (b.end - b.start)
+    })
+
+    for (const e of cellEvents) {
+      const id = e._.id
+
+      if (!cellOverlaps[id]) cellOverlaps[id] = { overlaps: new Set(), maxConcurrent: 1, position: 0 }
+
+      // Remove expired events from active tracking list.
+      activeEvents = activeEvents.filter(active => active.end > e.start)
+
+      // Find all current overlaps in the current cell or schedule.
+      const currentOverlaps = activeEvents.filter(active => {
+        const sameSchedule = !config.schedules?.length || e.schedule === active.schedule
+        return sameSchedule && active.start < e.end
+      })
+
+      // Sort current overlaps by original start time to ensure consistent positioning
+      currentOverlaps.sort((a, b) => {
+        const aOriginalStart = a._originalStart || a.start
+        const bOriginalStart = b._originalStart || b.start
+        return aOriginalStart - bOriginalStart
+      })
+
+      const takenPositions = new Set(currentOverlaps.map(ev => cellOverlaps[ev._.id]?.position ?? 0))
+
+      // Assign the lowest available column position.
+      let position = 0
+      while (takenPositions.has(position)) position++
+
+      cellOverlaps[id].position = position
+      activeEvents.push(e)
+
+      // Calculate inherited maxConcurrent from overlaps.
+      const inheritedMax = Math.max(1, ...currentOverlaps.map(ev => cellOverlaps[ev._.id]?.maxConcurrent ?? 1))
+
+      // Set maxConcurrent for this event.
+      cellOverlaps[id].maxConcurrent = Math.max(currentOverlaps.length + 1, inheritedMax)
+
+      // Update all overlapping events to match the new maxConcurrent.
+      for (const activeEvent of currentOverlaps) {
+        cellOverlaps[activeEvent._.id].overlaps.add(id)
+        cellOverlaps[id].overlaps.add(activeEvent._.id)
+        cellOverlaps[activeEvent._.id].maxConcurrent = cellOverlaps[id].maxConcurrent
+      }
+
+      // Track the longest streak of overlapping events.
+      maxConcurrent = Math.max(maxConcurrent, cellOverlaps[id].maxConcurrent)
+    }
+
+    // Convert Sets to Arrays.
+    for (const id in cellOverlaps) cellOverlaps[id].overlaps = [...cellOverlaps[id].overlaps]
+
+    return { cellOverlaps, longestStreak: maxConcurrent }
+  }
+
   return {
     events,
     getEvent,
     getViewEvents,
     getCellOverlappingEvents,
+    getCellOverlappingEventsFromList,
     getEventsInRange,
     createEvent,
     deleteEvent,

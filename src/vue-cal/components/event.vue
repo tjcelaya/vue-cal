@@ -14,8 +14,11 @@
       .vuecal__event-title {{ event.title }}
       .vuecal__event-time(v-if="config.time && !inAllDayBar")
         span.vuecal__event-comma(v-if="view.isMonth") ,
-        span.vuecal__event-start {{ event._[`startTimeFormatted${config.twelveHour ? 12 : 24}`] }}
-        span.vuecal__event-end(v-if="!view.isMonth") &nbsp;- {{ event._[`endTimeFormatted${config.twelveHour ? 12 : 24}`] }}
+        span.vuecal__event-start {{ displayStartTime }}
+        span.vuecal__event-end(v-if="!view.isMonth && !event._.multiday") &nbsp;- {{ displayEndTime }}
+        .vuecal__event-end-multiday(v-if="!view.isMonth && event._.multiday")
+          div &nbsp;- {{ event._[`endTimeFormatted${config.twelveHour ? 12 : 24}`] }}
+          .vuecal__event-date-range(style="font-size: 0.8em; opacity: 0.9;") {{ formatDateRange() }}
       .vuecal__event-content(v-if="!inAllDayBar" v-html="event.content")
   .vuecal__event-resizer(v-if="isResizable" @dragstart.prevent.stop)
   transition(name="vuecal-delete-btn")
@@ -65,26 +68,77 @@ const isResizable = computed(() => {
 })
 const isDeletable = computed(() => config.editableEvents.delete && event.deletable !== false && !event.background)
 
-const classes = computed(() => ({
-  [`vuecal__event--${event._.id}`]: true,
-  [event.class]: !!event.class,
-  'vuecal__event--recurring': !!event.recurring,
-  'vuecal__event--background': !!event.background,
-  'vuecal__event--all-day': event.allDay || event._?.startMinutes === 0 && event._?.duration === 24 * 60,
-  'vuecal__event--multiday': !!event._?.multiday,
-  'vuecal__event--cut-top': !props.inAllDayBar && event._?.startMinutes < config.timeFrom,
-  'vuecal__event--cut-bottom': !props.inAllDayBar && event._?.endMinutes > config.timeTo || event._.multiday,
-  // Only apply the dragging class on the event copy that is being dragged.
-  'vuecal__event--dragging': !event._.draggingGhost && event._.dragging,
-  // Only apply the dragging-ghost class on the event original that remains fixed while a copy is being
-  // dragged. Sometimes when dragging fast the dragging-ghost class would get stuck and events stays
-  // invisible, so if dragging is false, disable the dragging-ghost class as well.
-  // On event drop, if the new position of the event is approved, only remove the dragging-ghost class
-  // after event deletion (event._.dragging is already false) so the event ghost does not flash in before
-  // deletion.
-  'vuecal__event--dragging-ghost': event._.draggingGhost,
-  'vuecal__event--resizing': touch.resizing
-}))
+const classes = computed(() => {
+  let cutTop = false
+  let cutBottom = false
+
+  if (!props.inAllDayBar && event._?.multiday) {
+    // For multi-day events, determine cut classes based on which day we're showing
+    if (event._._isFirstDay && !event._._isLastDay) {
+      // First day: cut at bottom (continues to next day)
+      cutBottom = true
+    } else if (event._._isLastDay && !event._._isFirstDay) {
+      // Last day: cut at top (continues from previous day)
+      cutTop = true
+    } else if (!event._._isFirstDay && !event._._isLastDay) {
+      // Middle day: cut at both top and bottom
+      cutTop = true
+      cutBottom = true
+    }
+    // If it's both first and last day (single day), no cuts
+  } else if (!props.inAllDayBar) {
+    // For single-day events, use original logic
+    cutTop = event._?.startMinutes < config.timeFrom
+    cutBottom = event._?.endMinutes > config.timeTo
+  }
+
+  return {
+    [`vuecal__event--${event._.id}`]: true,
+    [event.class]: !!event.class,
+    'vuecal__event--recurring': !!event.recurring,
+    'vuecal__event--background': !!event.background,
+    'vuecal__event--all-day': event.allDay || event._?.startMinutes === 0 && event._?.duration === 24 * 60,
+    'vuecal__event--multiday': !!event._?.multiday,
+    'vuecal__event--cut-top': cutTop,
+    'vuecal__event--cut-bottom': cutBottom,
+    // Only apply the dragging class on the event copy that is being dragged.
+    'vuecal__event--dragging': !event._.draggingGhost && event._.dragging,
+    // Only apply the dragging-ghost class on the event original that remains fixed while a copy is being
+    // dragged. Sometimes when dragging fast the dragging-ghost class would get stuck and events stays
+    // invisible, so if dragging is false, disable the dragging-ghost class as well.
+    // On event drop, if the new position of the event is approved, only remove the dragging-ghost class
+    // after event deletion (event._.dragging is already false) so the event ghost does not flash in before
+    // deletion.
+    'vuecal__event--dragging-ghost': event._.draggingGhost,
+    'vuecal__event--resizing': touch.resizing
+  }
+})
+
+// Computed properties for time display
+const displayStartTime = computed(() => {
+  if (event._.multiday) {
+    // For multi-day events, always show the original start time
+    return event._[`startTimeFormatted${config.twelveHour ? 12 : 24}`]
+  }
+  return event._[`startTimeFormatted${config.twelveHour ? 12 : 24}`]
+})
+
+const displayEndTime = computed(() => {
+  if (event._.multiday) {
+    // For multi-day events, show original end time with date info
+    const startDate = dateUtils.formatDate(event.start, 'MMM D')
+    const endDate = dateUtils.formatDate(event.end, 'MMM D')
+    return `${event._[`endTimeFormatted${config.twelveHour ? 12 : 24}`]}\n(${startDate} → ${endDate})`
+  }
+  return event._[`endTimeFormatted${config.twelveHour ? 12 : 24}`]
+})
+
+const formatDateRange = () => {
+  if (!event._.multiday) return ''
+  const startDate = dateUtils.formatDate(event.start, 'MMM D')
+  const endDate = dateUtils.formatDate(event.end, 'MMM D')
+  return `${startDate} → ${endDate}`
+}
 
 const styles = computed(() => {
   const hasPosition = (view.isDay || view.isDays || view.isWeek) && config.time && !props.inAllDayBar
@@ -97,14 +151,51 @@ const styles = computed(() => {
   }
 
   if (hasPosition) {
-    // Ensure that the event start and end stay in range.
-    const from = Math.max(config.timeFrom, event._.startMinutes)
-    const to = Math.min(config.timeTo, event._.endMinutes) + (event._.duration && !event._.endMinutes ? 24 * 60 : 0)
+    let startMinutes, endMinutes
+
+    // For multi-day events, use the correct times based on which day we're showing
+    if (event._.multiday && event._._isFirstDay !== undefined) {
+      if (event._._isFirstDay && !event._._isLastDay) {
+        // First day of multi-day: use ORIGINAL start time from the source event, extend to end of day
+        const originalEvent = new Date(event._originalStart || event.start)
+        startMinutes = originalEvent.getHours() * 60 + originalEvent.getMinutes()
+        endMinutes = config.timeTo
+
+      } else if (event._._isLastDay && !event._._isFirstDay) {
+        // Last day of multi-day: start from beginning of day, use ORIGINAL end time from source event
+        startMinutes = config.timeFrom
+        // Get the original event's end time - use _originalEnd if available, otherwise use event.end
+        const originalEndEvent = event._originalEnd || event.end
+        endMinutes = originalEndEvent.getHours() * 60 + originalEndEvent.getMinutes()
+      } else if (event._._isFirstDay && event._._isLastDay) {
+        // Single day event spanning only one day (use original times)
+        const originalEvent = new Date(event._originalStart || event.start)
+        startMinutes = originalEvent.getHours() * 60 + originalEvent.getMinutes()
+        const originalEndEvent = event._originalEnd || event.end
+        endMinutes = originalEndEvent.getHours() * 60 + originalEndEvent.getMinutes()
+      } else {
+        // Middle day: full day
+        startMinutes = config.timeFrom
+        endMinutes = config.timeTo
+      }
+    } else {
+      // Regular single-day events - use their actual start/end times
+      startMinutes = event._.startMinutes
+      endMinutes = event._.endMinutes
+    }
+
+    const from = Math.max(config.timeFrom, startMinutes)
+    const to = Math.min(config.timeTo, endMinutes) + (event._.duration && !endMinutes ? 24 * 60 : 0)
+
+
     const top = minutesToPercentage(from, config)
     const height = minutesToPercentage(to, config) - top
 
+
     styles.top = `${top}%`
     styles.height = `${height}%`
+
+
   }
 
   return styles
@@ -271,6 +362,9 @@ const onDocMouseup = async e => {
       })
     }
 
+    const oldStart = new Date(event.start)
+    const oldEnd = new Date(event.end)
+
     // If the event resize is accepted apply new range, if refused (SPECIFICALLY FALSE) revert to original.
     event.start = acceptResize === false ? (touch.resizingLastAcceptedEvent || touch.resizingOriginalEvent).start : (touch.resizingLastAcceptedEvent?.start || newStart)
     event.end = acceptResize === false ? (touch.resizingLastAcceptedEvent || touch.resizingOriginalEvent).end : (touch.resizingLastAcceptedEvent?.end || newEnd)
@@ -279,6 +373,8 @@ const onDocMouseup = async e => {
       event.start = touch.resizingOriginalEvent.start
       event.end = touch.resizingOriginalEvent.end
     }
+
+
     globalTouchState.isResizingEvent = false // Add a CSS class on wrapper while resizing.
   }
 
@@ -372,6 +468,64 @@ onBeforeUnmount(() => {
     cursor: ns-resize;
 
     &:hover {opacity: 0.25;}
+  }
+
+  // Multi-day event styling
+  &--multiday {
+
+    // Add visual indicators for multi-day events
+    &:before {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 6px;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.8);
+      border-radius: 50%;
+      z-index: 1;
+    }
+
+    // Different styling when event is cut at top or bottom
+    &.vuecal__event--cut-top {
+      border-top-left-radius: 0;
+      border-top-right-radius: 0;
+
+      &:after {
+        content: '↑';
+        position: absolute;
+        top: 2px;
+        right: 4px;
+        font-size: 10px;
+        opacity: 0.7;
+        color: white;
+        line-height: 1;
+      }
+    }
+
+    &.vuecal__event--cut-bottom {
+      border-bottom-left-radius: 0;
+      border-bottom-right-radius: 0;
+
+      &:after {
+        content: '↓';
+        position: absolute;
+        bottom: 2px;
+        right: 4px;
+        font-size: 10px;
+        opacity: 0.7;
+        color: white;
+        line-height: 1;
+      }
+    }
+
+    // If both cut top and bottom, show both arrows
+    &.vuecal__event--cut-top.vuecal__event--cut-bottom:after {
+      content: '↕';
+      top: 50%;
+      bottom: auto;
+      transform: translateY(-50%);
+    }
   }
 }
 

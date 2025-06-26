@@ -215,8 +215,59 @@ const mainVuecalConfig = reactive({
   clickToNavigate: ref(false),
   watchRealTime: ref(true),
   events: ref([
-    { title: 'Event 1', start: new Date(new Date().setHours(8, 0, 0, 0)), end: new Date(new Date().setHours(8, 30, 0, 0)) },
-    { title: 'Event 2', start: new Date(new Date().setHours(9, 0, 0, 0)), end: new Date(new Date().setHours(9, 30, 0, 0)) }
+    { title: 'Event 1', start: new Date(new Date(2025, 5, 25, 8).setHours(8, 0, 0, 0)), end: new Date(new Date(2025, 5, 25, 8).setHours(8, 30, 0, 0)) },
+    { title: 'Event 2', start: new Date(new Date(2025, 5, 25, 8).setHours(9, 0, 0, 0)), end: new Date(new Date(2025, 5, 25, 8).setHours(9, 30, 0, 0)) },
+
+    // Multi-day test events with overlaps
+    {
+      title: 'Multi-day Event (2 days)',
+      start: new Date(new Date(2025, 5, 25, 8).setHours(20, 0, 0, 0)),
+      end: new Date(new Date((new Date(2025, 5, 25, 8).getTime()) + 24*60*60*1000).setHours(10, 0, 0, 0)),
+      backgroundColor: '#e74c3c',
+      color: 'white'
+    },
+    {
+      title: 'Overlapping Event A',
+      start: new Date(new Date(2025, 5, 25, 8).setHours(7, 30, 0, 0)),
+      end: new Date(new Date(2025, 5, 25, 8).setHours(9, 0, 0, 0)),
+      backgroundColor: '#3498db',
+      color: 'white'
+    },
+    {
+      title: 'Overlapping Event B',
+      start: new Date(new Date((new Date(2025, 5, 25, 8).getTime()) + 24*60*60*1000).setHours(8, 0, 0, 0)),
+      end: new Date(new Date((new Date(2025, 5, 25, 8).getTime()) + 24*60*60*1000).setHours(12, 0, 0, 0)),
+      backgroundColor: '#f39c12',
+      color: 'white'
+    },
+    {
+      title: 'Overnight Event',
+      start: new Date(new Date((new Date(2025, 5, 25, 8).getTime()) + 24*60*60*1000).setHours(22, 0, 0, 0)),
+      end: new Date(new Date((new Date(2025, 5, 25, 8).getTime()) + 2*24*60*60*1000).setHours(6, 0, 0, 0)),
+      backgroundColor: '#9b59b6',
+      color: 'white'
+    },
+    {
+      title: 'Long Multi-day Event (3 days)',
+      start: new Date(new Date((new Date(2025, 5, 25, 8).getTime()) + 2*24*60*60*1000).setHours(16, 0, 0, 0)),
+      end: new Date(new Date((new Date(2025, 5, 25, 8).getTime()) + 4*24*60*60*1000).setHours(12, 0, 0, 0)),
+      backgroundColor: '#27ae60',
+      color: 'white'
+    },
+    {
+      title: 'Overlapping Single Event',
+      start: new Date(new Date((new Date(2025, 5, 25, 8).getTime()) + 2*24*60*60*1000).setHours(14, 0, 0, 0)),
+      end: new Date(new Date((new Date(2025, 5, 25, 8).getTime()) + 2*24*60*60*1000).setHours(18, 0, 0, 0)),
+      backgroundColor: '#e67e22',
+      color: 'white'
+    },
+    {
+      title: 'Another Overlapping Event',
+      start: new Date(new Date((new Date(2025, 5, 25, 8).getTime()) + 2*24*60*60*1000).setHours(17, 0, 0, 0)),
+      end: new Date(new Date((new Date(2025, 5, 25, 8).getTime()) + 2*24*60*60*1000).setHours(19, 0, 0, 0)),
+      backgroundColor: '#8e44ad',
+      color: 'white'
+    }
   ]),
   showSchedules: ref(false),
   schedules: computed(() => {
